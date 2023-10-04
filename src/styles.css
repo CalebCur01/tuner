@@ -1,0 +1,9 @@
+#gauge {
+  width: 400px;  /* adjust as needed */
+  height: 400px; /* adjust as needed */
+  margin: 0 auto; /* centers the gauge within the column if needed */
+}
+
+#needle {
+  transition: transform 0.2s ease-out;
+}
