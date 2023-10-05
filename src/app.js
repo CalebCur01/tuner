@@ -1,4 +1,121 @@
-import PitchAnalyser from 'pitch-analyser';
+
+//svg elements
+const needle = document.getElementById('needle');
+var topNote = document.getElementById('topText'); 
+var leftNote = document.getElementById('leftText'); 
+var rightNote = document.getElementById('rightText'); 
+
+let lastNote = null;
+let consistentNoteCount = 0;
+const CONSISTENT_READINGS_THRESHOLD = 3; 
+ 
+//rotate based on cents
+function updateNeedleRotation(cents) {
+    const rotationDegrees = cents * 0.3;
+    needle.style.transform = `rotate(${rotationDegrees}deg)`;
+}
+
+
+//update the displayed notes
+function updateDisplayedNote(note, cents) {
+    let newNote = note;
+    if (cents > 50) {
+        newNote = getNextNote(note);
+    } else if (cents < -50) {
+        newNote = getPreviousNote(note);
+    }
+    topNote.textContent = newNote;
+    leftNote.textContent = getPreviousNote(newNote);
+    rightNote.textContent = getNextNote(newNote);
+}
+
+//functions for getting next and previous notes
+function getNextNote(note) {
+    const index = orderedNotes.indexOf(note);
+    if (index === -1 || index === orderedNotes.length - 1) {
+      return orderedNotes[0] //wrap around
+    }
+    return orderedNotes[index + 1];
+  }
+ 
+  function getPreviousNote(note) {
+    const index = orderedNotes.indexOf(note);
+    if (index <= 0) {
+      return orderedNotes[orderedNotes.length - 1] //wrap around
+    }
+    return orderedNotes[index - 1];
+  }
+// width of each bin = max_frequency / frequencyBinCount 
+// frequencyBinCount = FFT.size / 2  
+// max_frequency = sampleRate / 2 = 24000 
+  function analyzeAudio(stream) {
+    const audioContext = new AudioContext(); 
+    const analyser = audioContext.createAnalyser();
+    analyser.fftSize =  8192 //should give us bin width of 5.86Hz
+    const source = audioContext.createMediaStreamSource(stream);
+    source.connect(analyser);
+
+    let dataArray = new Uint8Array(analyser.frequencyBinCount);
+
+    function startAnalysis() {
+        setInterval(() => {
+            analyser.getByteFrequencyData(dataArray);
+            const floatArray = Float32Array.from(dataArray);
+            const peakIndex = HPS(dataArray,4);
+             // Convert peakIndex to corresponding frequency
+             const peakFrequency = peakIndex * 5.86;
+             console.log(`${peakFrequency}Hz`);
+        }, 5000); // every 5 seconds
+    }
+    startAnalysis();  //Start the repeated analysis
+}
+//get mic access
+document.getElementById('start-analyser').addEventListener('click', () => {
+    console.log('button pressed');
+
+    navigator.mediaDevices.getUserMedia({ audio: true })
+        .then(stream => {
+            console.log('microphone access granted!');
+            analyzeAudio(stream);
+        })
+        .catch(err => {
+            console.error("Error accessing the microphone:", err);
+        });
+});
+
+function helperFunction(arr, n) { //helper function to log top n frequencybins
+    const indexedData = Array.from(arr).map((value, index) => ({ value, index })); // extract the index and value
+    indexedData.sort((a,b) => b.value - a.value) //sort into descending order
+    const topN = indexedData.slice(0,n) //get only the top n values
+    
+    topN.forEach((item) => { 
+        if(item.value > 0){
+            console.log(`${(item.index*5.86).toFixed(2)}-${((item.index+1)*5.86).toFixed(2)}Hz count is ${item.value}`);
+        }
+    });
+};
+
+function HPS(dataArray, R) { //Harmonic Product Spectrum method of finding fundamental frequency
+    function downSample(dataArray, factor) {
+        return dataArray.filter((_, index) => index % factor === 0); //keep only every i'th value where i = factor
+    }
+    
+    let productArray = new Float32Array(dataArray.length); //for multiplying we need the same length
+    dataArray.forEach((value, index) => {
+        productArray[index] = value; // initialize with the original dataArray values
+    });
+    
+    for(let i = 2;i <= R; i++){
+        let downSampledArr = downSample(dataArray,i);
+        for (let j = 0; j < downSampledArr.length; j++) {
+            productArray[j] *= downSampledArr[j]; //now we actually multiply the values with the original
+        }
+    //find the peak frequency index
+    const peakIndex = productArray.indexOf(Math.max(...productArray));
+
+    return peakIndex;
+    }
+}
 
 //notes and frequencies 
 const noteFrequencies = {
@@ -112,116 +229,3 @@ const noteFrequencies = {
     "B8" : 7902.13,
 };
 const orderedNotes = Object.keys(noteFrequencies);
-
-//svg elements
-const needle = document.getElementById('needle');
-var topNote = document.getElementById('topText'); 
-var leftNote = document.getElementById('leftText'); 
-var rightNote = document.getElementById('rightText'); 
-
-let lastNote = null;
-let consistentNoteCount = 0;
-const CONSISTENT_READINGS_THRESHOLD = 3; 
- 
-//rotate based on cents
-function updateNeedleRotation(cents) {
-    const rotationDegrees = cents * 0.3;
-    needle.style.transform = `rotate(${rotationDegrees}deg)`;
-}
-
-
-//update the displayed notes
-function updateDisplayedNote(note, cents) {
-    let newNote = note;
-    if (cents > 50) {
-        newNote = getNextNote(note);
-    } else if (cents < -50) {
-        newNote = getPreviousNote(note);
-    }
-    topNote.textContent = newNote;
-    leftNote.textContent = getPreviousNote(newNote);
-    rightNote.textContent = getNextNote(newNote);
-}
-
-//functions for getting next and previous notes
-function getNextNote(note) {
-    const index = orderedNotes.indexOf(note);
-    if (index === -1 || index === orderedNotes.length - 1) {
-      return orderedNotes[0] //wrap around
-    }
-    return orderedNotes[index + 1];
-  }
- 
-  function getPreviousNote(note) {
-    const index = orderedNotes.indexOf(note);
-    if (index <= 0) {
-      return orderedNotes[orderedNotes.length - 1] //wrap around
-    }
-    return orderedNotes[index - 1];
-  }
-
-
-//get mic access
-navigator.mediaDevices.getUserMedia({ audio: true })
-  .then(stream => {
-    console.log('microphone access granted!')
-    analyser.initAnalyser().then(() => {
-        console.log('Analyser initialized');
-    }).catch(handleError);
-  })
-  .catch(err => {
-    console.error("Error accessing the microphone:", err);
-  });
-
-
-function analyserCallback(payload) {
-    console.log(payload);
-
-    // Update needle rotation
-    updateNeedleRotation(payload.cents)
-    
-     // Stabilize note changes
-     if (lastNote === payload.note) {
-        consistentNoteCount++;
-    } else {
-        consistentNoteCount = 0;
-    }
-    lastNote = payload.note;
-    
-    //update the displayed note only if the same note is detected consistently
-    if (consistentNoteCount >= CONSISTENT_READINGS_THRESHOLD) {
-        updateDisplayedNote(payload.note, payload.cents);
-    }
-}
-//to avoid too many rapid updates
-let lastUpdateTime = 0;
-const throttleTime = 400; //milliseconds
-
-function throttledCallback(payload) {
-    const currentTime = Date.now();
-    if (currentTime - lastUpdateTime >= throttleTime) {
-        lastUpdateTime = currentTime;
-        analyserCallback(payload);
-    }
-}
-const analyserOptions = {
-    callback: throttledCallback,
-    returnNote: true,
-    returnCents: true,
-    decimals: 2,
-};
-const analyser = new PitchAnalyser(analyserOptions);
-
-
-document.getElementById('start-analyser').addEventListener('click', () => {
-    console.log('button pressed')
-
-    analyser.startAnalyser();
-});
-
-function handleError(err) {
-    console.error(`Error with pitch-analyser: ${err}`);
-}
-
-
-
