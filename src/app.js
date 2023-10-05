@@ -5,16 +5,22 @@ var topNote = document.getElementById('topText');
 var leftNote = document.getElementById('leftText'); 
 var rightNote = document.getElementById('rightText'); 
 
-let lastNote = null;
-let consistentNoteCount = 0;
-const CONSISTENT_READINGS_THRESHOLD = 3; 
- 
+let currentRotation = 0; // Start with 0 degrees
+
+function rotateNeedle(degrees) {
+    const needle = document.getElementById('needle');
+    const cx = 200; // x-coordinate of the center of rotation
+    const cy = 200; // y-coordinate of the center of rotation
+
+    // Apply rotation transform around the center
+    needle.setAttribute('transform', `rotate(${degrees}, ${cx}, ${cy})`);
+}
+
 //rotate based on cents
 function updateNeedleRotation(cents) {
     const rotationDegrees = cents * 0.3;
-    needle.style.transform = `rotate(${rotationDegrees}deg)`;
+    rotateNeedle(rotationDegrees);
 }
-
 
 //update the displayed notes
 function updateDisplayedNote(note, cents) {
@@ -28,7 +34,20 @@ function updateDisplayedNote(note, cents) {
     leftNote.textContent = getPreviousNote(newNote);
     rightNote.textContent = getNextNote(newNote);
 }
-
+//function to find closest note 
+function getClosestNote(frequency) {
+    let minDiff = Infinity; //so that it will always pick some note to start off
+    let closestNote;
+    
+    for (const note in noteFrequencies) {
+        const diff = Math.abs(noteFrequencies[note] - frequency);
+        if (diff < minDiff) {
+            minDiff = diff;
+            closestNote = note;
+        }
+    }
+    return closestNote;
+}
 //functions for getting next and previous notes
 function getNextNote(note) {
     const index = orderedNotes.indexOf(note);
@@ -55,8 +74,11 @@ function getNextNote(note) {
     const source = audioContext.createMediaStreamSource(stream);
     source.connect(analyser);
 
-    let dataArray = new Uint8Array(analyser.frequencyBinCount);
-
+    let dataArray = new Uint8Array(analyser.frequencyBinCount); //holds our data from input stream
+    
+    const CONSISTENT_READINGS_THRESHOLD = 5 //number of times note must be read in a row to update view
+    let consistentNoteCount = 0;
+    let lastNote = 'C4' //we start off with c4 just so it will work properly
     function startAnalysis() {
         setInterval(() => {
             analyser.getByteFrequencyData(dataArray);
@@ -65,6 +87,23 @@ function getNextNote(note) {
              // Convert peakIndex to corresponding frequency
              const peakFrequency = peakIndex * 5.86;
              console.log(`${peakFrequency}Hz`);
+             const detectedNote = getClosestNote(peakFrequency);
+             console.log(detectedNote);
+            //only update for notes detected multiple reads in a row for consistency
+             if (detectedNote === lastNote) {
+                consistentNoteCount++;
+            } else {
+                consistentNoteCount = 1;
+                lastNote = detectedNote;
+            }
+            //finally we update the gauge accordingly
+            if (consistentNoteCount === CONSISTENT_READINGS_THRESHOLD) {
+                updateDisplayedNote(detectedNote, 0);  // zero cents since we're updating to a new note
+            } else {
+                const centsOff = 1200 * Math.log2(peakFrequency / noteFrequencies[lastNote]);
+                console.log(centsOff);
+                updateDisplayedNote(lastNote, centsOff);
+            }
         }, 500); // 500ms delay
     }
     startAnalysis();  //Start the repeated analysis
@@ -82,18 +121,6 @@ document.getElementById('start-analyser').addEventListener('click', () => {
             console.error("Error accessing the microphone:", err);
         });
 });
-
-function helperFunction(arr, n) { //helper function to log top n frequencybins
-    const indexedData = Array.from(arr).map((value, index) => ({ value, index })); // extract the index and value
-    indexedData.sort((a,b) => b.value - a.value) //sort into descending order
-    const topN = indexedData.slice(0,n) //get only the top n values
-    
-    topN.forEach((item) => { 
-        if(item.value > 0){
-            console.log(`${(item.index*5.86).toFixed(2)}-${((item.index+1)*5.86).toFixed(2)}Hz count is ${item.value}`);
-        }
-    });
-};
 
 function HPS(dataArray, R) { //Harmonic Product Spectrum method of finding fundamental frequency
     function downSample(dataArray, factor) {
@@ -115,6 +142,18 @@ function HPS(dataArray, R) { //Harmonic Product Spectrum method of finding funda
     return peakIndex;
     }
 }
+
+function helperFunction(arr, n) { //helper function to log top n frequencybins
+    const indexedData = Array.from(arr).map((value, index) => ({ value, index })); // extract the index and value
+    indexedData.sort((a,b) => b.value - a.value) //sort into descending order
+    const topN = indexedData.slice(0,n) //get only the top n values
+    
+    topN.forEach((item) => { 
+        if(item.value > 0){
+            console.log(`${(item.index*5.86).toFixed(2)}-${((item.index+1)*5.86).toFixed(2)}Hz count is ${item.value}`);
+        }
+    });
+};
 
 //notes and frequencies 
 const noteFrequencies = {
