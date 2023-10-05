@@ -61,11 +61,11 @@ function getNextNote(note) {
         setInterval(() => {
             analyser.getByteFrequencyData(dataArray);
             const floatArray = Float32Array.from(dataArray);
-            const peakIndex = HPS(dataArray,4);
+            const peakIndex = HPS(dataArray,6);
              // Convert peakIndex to corresponding frequency
              const peakFrequency = peakIndex * 5.86;
              console.log(`${peakFrequency}Hz`);
-        }, 5000); // every 5 seconds
+        }, 500); // 500ms delay
     }
     startAnalysis();  //Start the repeated analysis
 }
@@ -104,7 +104,7 @@ function HPS(dataArray, R) { //Harmonic Product Spectrum method of finding funda
     dataArray.forEach((value, index) => {
         productArray[index] = value; // initialize with the original dataArray values
     });
-    
+    productArray.fill(1); //reset 
     for(let i = 2;i <= R; i++){
         let downSampledArr = downSample(dataArray,i);
         for (let j = 0; j < downSampledArr.length; j++) {
@@ -112,7 +112,6 @@ function HPS(dataArray, R) { //Harmonic Product Spectrum method of finding funda
         }
     //find the peak frequency index
     const peakIndex = productArray.indexOf(Math.max(...productArray));
-
     return peakIndex;
     }
 }
