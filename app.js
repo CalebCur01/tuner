@@ -17,7 +17,7 @@ function rotateNeedle(degrees) {
 
 //rotate based on cents
 function updateNeedleRotation(cents) {
-    if(cents === -Infinity || cents === Infinity ||isNaN(cents)) {
+    if(cents === -Infinity || cents === Infinity || isNaN(cents)) {
         cents = 0;
     }
     const rotationDegrees = cents * 0.3 * 5;
@@ -45,7 +45,7 @@ function getClosestNote(frequency) {
     return closestNote;
 }
 //functions for getting next and previous notes
-function getNextNote(note) {
+ function getNextNote(note) {
     const index = orderedNotes.indexOf(note);
     if (index === -1 || index === orderedNotes.length - 1) {
       return orderedNotes[0] //wrap around
@@ -60,65 +60,159 @@ function getNextNote(note) {
     }
     return orderedNotes[index - 1];
   }
-// width of each bin = max_frequency / frequencyBinCount 
-// frequencyBinCount = FFT.size / 2  
-// max_frequency = sampleRate / 2 = 24000 
-  function analyzeAudio(stream) {
+  //function to play sound effect to indicate note is in tune
+  let audioContext = new (window.AudioContext || window.webkitAudioContext)();
+  var bellCoolDown = false; //flag so the bell sound won't keep playing too rapidly
+function playBell() {
+    if(!bellCoolDown) {
+      fetch('bell.mp3')
+      .then(response => response.arrayBuffer())
+      .then(data => audioContext.decodeAudioData(data))
+      .then(buffer => {
+        let source = audioContext.createBufferSource();
+        source.buffer = buffer;
+        source.connect(audioContext.destination);
+        source.start();
+        bellCoolDown = true;
+
+        setTimeout(() => {
+          bellCoolDown = false;
+        },3000); // set cooldown in ms
+    })
+    .catch(err => console.log(err));
+  }
+  }
+
+
+
+  //width of each bin = max_frequency / frequencyBinCount 
+  //frequencyBinCount = FFT.size / 2  
+  //max_frequency = sampleRate / 2 = 24000 
+function analyzeAudio(stream) {
     const audioContext = new AudioContext(); 
     const analyser = audioContext.createAnalyser();
     analyser.fftSize =  8192 //should give us bin width of 5.86Hz
     const source = audioContext.createMediaStreamSource(stream);
     source.connect(analyser);
 
-    let dataArray = new Uint8Array(analyser.frequencyBinCount); //holds our data from input stream
-    const CONSISTENT_READINGS_THRESHOLD = 5;//number of times note must be read in a row to update note
-    let consistentNoteCount = 0;
-    let lastNote = 'C4' //we start off with c4 just so it will work properly
-    
     function startAnalysis() {
         setInterval(() => {
-            analyser.getByteFrequencyData(dataArray);
-            const floatArray = Float32Array.from(dataArray);
-            const peakIndex = HPS(dataArray,7);
-            
-            const peakFrequency = peakIndex * 5.86;
-            const detectedNote = getClosestNote(peakFrequency);
-            
-             //only update for notes detected multiple reads in a row for consistency
-             if (detectedNote === lastNote) {
-                consistentNoteCount++;
-            } else {
-                consistentNoteCount = 1;
-                lastNote = detectedNote;
-            }
-            //calculate how many cents off from closest note
-            const centsOff = 1200 * Math.log2(peakFrequency / noteFrequencies[detectedNote]);
-            console.log(`${detectedNote} ${peakFrequency} off by ${centsOff}`);
-            
-            //finally we update the gauge accordingly
-            if (consistentNoteCount >= CONSISTENT_READINGS_THRESHOLD) {
-                updateDisplayedNote(detectedNote);
-                updateNeedleRotation(centsOff);
-                consistentNoteCount = 0;
-            } else {
-                updateNeedleRotation(centsOff);
-            }
-        }, 350); // 350ms delay
+          var timeArray = new Float32Array(analyser.fftSize);
+          analyser.getFloatTimeDomainData(timeArray);
+          var noteFrequency = autoCorrelate(timeArray,audioContext.sampleRate);
+          if(noteFrequency == -1) { //if its too quiet, don't do anything
+            return
+          }
+          const detectedNote = getClosestNote(noteFrequency);
+          
+          //calculate how many cents off detected Hz is from closest note's actual Hz
+          const centsOff = 1200 * Math.log2(noteFrequency / noteFrequencies[detectedNote]);
+          console.log(`${detectedNote} ${noteFrequency}Hz off by ${centsOff}cents`); //we will consider +/- 5 cents to be in tune
+          if(centsOff > 100) {
+            return //ignore occasional extreme values
+          }
+          //update gauge
+          updateDisplayedNote(detectedNote);
+          if(centsOff >= -5 && centsOff <= 5) { // in range [-5,5] cents, we want no rotation
+            updateNeedleRotation(0);
+            playBell();
+          } 
+          else {
+            updateNeedleRotation(centsOff);
+          }
+
+        }, 750); // 750ms delay prevents needle from updating too rapidly
     }
     startAnalysis();  //Start the repeated analysis
 }
 //get mic access
-document.getElementById('start-analyser').addEventListener('click', () => {
-
-    navigator.mediaDevices.getUserMedia({ audio: true })
-        .then(stream => {
-            analyzeAudio(stream);
-        })
-        .catch(err => {
-            console.error("Error accessing the microphone:", err);
-            rotateNeedle(-80);
-        });
+document.getElementById('start-analyser').addEventListener('click', function() {
+  navigator.mediaDevices.getUserMedia({ audio: true })
+  .then(stream => {
+    //indicate tuner is now turned on
+    this.textContent = "Tuner Active";
+    this.classList.remove('btn-primary');
+    this.classList.add('btn-danger');
+    analyzeAudio(stream);
+  })
+  .catch(err => {
+    alert("Error accessing the microphone:", err);
+  });
 });
+
+//autoCorrelate function: source https://alexanderell.is/posts/tuner/tuner.js
+function autoCorrelate(buffer, sampleRate) {
+  //root-mean-square to determine if there's enough signal
+  var SIZE = buffer.length;
+  var sumOfSquares = 0;
+  for(var i = 0; i< SIZE; i++) {
+      var val = buffer[i];
+      sumOfSquares += val * val;
+  }
+  var rootMeanSquare = Math.sqrt(sumOfSquares/SIZE)
+  if(rootMeanSquare < 0.01) {
+      return -1; //too quiet, we return -1
+  }
+  var r1 = 0;
+  var r2 = SIZE - 1;
+  var threshold = 0.2
+  // walk up for r1
+  for (var i = 0; i < SIZE / 2; i++) {
+    if (Math.abs(buffer[i]) < threshold) {
+      r1 = i;
+      break;
+    }
+  }
+  // walk down for r2
+  for (var i = 1; i < SIZE / 2; i++) {
+    if (Math.abs(buffer[SIZE - i]) < threshold) {
+      r2 = SIZE - i;
+      break;
+    }
+  }
+  // trim the buffer to [r1,r2] and update SIZE.
+  buffer = buffer.slice(r1, r2);
+  SIZE = buffer.length
+  
+  //create a new array of sums of offsets to perform the autocorrelation
+  var c = new Array(SIZE).fill(0);
+  //for each potential offset, calculate sum of each buffer value * offset value
+  for(let i = 0; i < SIZE; i++) {
+    for(let j = 0; j < SIZE - i; j++) {
+        c[i] = c[i] + buffer[j] * buffer[j+i];
+    }
+  }
+  //find the last index where the value is greater than the next one
+  var d = 0;
+  while (c[d] > c[d+1]) {
+    d++;
+  }
+  //go from d to the end to find the maximum
+  var maxValue = -1;
+  var maxIndex = -1;
+  for(var i = d; i < SIZE; i++){
+    if(c[i] > maxValue){
+        maxValue = c[i];
+        maxIndex = i;
+    }
+  }
+
+var T0 = maxIndex;
+  // "interpolation is parabolic interpolation. It helps with precision. We suppose that a parabola pass through the
+  // three points that comprise the peak. 'a' and 'b' are the unknowns from the linear equation system and b/(2a) is
+  // the "error" in the abscissa. Well x1,x2,x3 should be y1,y2,y3 because they are the ordinates." - from original author
+var x1 = c[T0 - 1];
+var x2 = c[T0];
+var x3 = c[T0 + 1]
+
+var a = (x1 + x3 - 2 * x2) / 2;
+var b = (x3 - x1) / 2
+if (a) {
+T0 = T0 - b / (2 * a);
+}
+
+return sampleRate/T0;
+}
 
 function HPS(dataArray, R) { //Harmonic Product Spectrum method of finding fundamental frequency
     function downSample(dataArray, factor) {
